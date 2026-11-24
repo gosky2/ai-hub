@@ -216,7 +216,7 @@ div.me { /* div만: 선(svg path·알갱이·이름표)도 class "me"를 써서 
 .side-tabs { display: flex; align-self: flex-start; flex: none; }
 .side-tabs button, .tabs button { background: none; border: 0; border-radius: 999px; padding: 5px 14px; font-size: 13px; color: var(--mute); }
 .side-tabs button[aria-pressed="true"], .tabs button[aria-pressed="true"] { background: var(--me); color: var(--night); font-weight: 600; }
-#app:not([data-side="chat"]) .side > .chat, #app:not([data-side="files"]) .side > .files, #app:not([data-side="todo"]) .side > .todo, #app:not([data-side="jobs"]) .side > .jobs { display: none; }
+#app:not([data-side="chat"]) .side > .chat, #app:not([data-side="files"]) .side > .files, #app:not([data-side="todo"]) .side > #todo, #app:not([data-side="tasks"]) .side > #tasks, #app:not([data-side="jobs"]) .side > .jobs { display: none; }
 .badge:not(:empty) { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 5px; padding: 0 5px; border-radius: 999px; background: var(--busy); color: var(--night); font-size: 11px; font-weight: 700; line-height: 1; }
 
 /* 내가 할 일 */
@@ -803,3 +803,24 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; } /* iOS가 글�
 .ask-tool { font: inherit; font-size: 12.5px; color: var(--mute); background: none; border: 1px solid var(--rim); border-radius: 999px; padding: 3px 8px; max-width: 140px; }
 .ask-tool:focus { border-color: var(--me); outline: none; color: var(--ink); }
 @media (max-width: 560px) { .brand-btns .agents-btn { padding: 3px 8px; font-size: 11px; } .ask-tool { max-width: 96px; } }
+/* 0.1.69 세션 작업 보드·메시지 규격 카드·세션 카드·컨텍스트 막대 */
+.tk { padding: 10px 12px; border: 1px solid var(--rim); border-radius: 12px; background: #ffffff06; display: grid; gap: 4px; }
+.tk.fresh { border-color: var(--flow); }
+.tk.flash { animation: tkflash 1.6s ease; } @keyframes tkflash { 0%, 40% { background: #8ef0df33; } }
+.tk-head { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--mute); }
+.tk-head b { color: var(--ink); font-size: 13.5px; } .tk-head time { margin-left: auto; }
+.tk-st { padding: 1px 8px; border-radius: 999px; background: var(--rim); color: var(--ink); font-size: 11.5px; }
+.tk-st.doing { background: #ffc56e26; color: var(--busy); } .tk-st.block { background: #ff9aa826; color: #ff9aa8; } .tk-st.done { background: #7ee0b526; color: #7ee0b5; }
+.tk-title { font-size: 14.5px; }
+.tk-f, .proto-r { font-size: 13px; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; } .tk-f span, .proto-r span { color: var(--mute); font-size: 12px; }
+.tk-sep { font-size: 12px; color: var(--mute); margin-top: 4px; list-style: none; }
+.tk.done { opacity: .7; }
+.proto { border-left: 3px solid var(--flow); padding: 4px 0 4px 10px; margin: 2px 0 6px; display: grid; gap: 3px; }
+.proto.done { border-color: #7ee0b5; } .proto.block, .proto.ask { border-color: #ff9aa8; }
+.proto-h { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.proto-op { font-weight: 700; } .proto-to { color: var(--mute); }
+.proto-t { background: var(--rim); color: var(--ink); border: 0; border-radius: 999px; padding: 0 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.ctx { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11.5px; color: var(--mute); flex-wrap: wrap; }
+.ctx-bar { width: 90px; height: 5px; border-radius: 999px; background: var(--rim); overflow: hidden; } .ctx-bar i { display: block; height: 100%; background: var(--flow); }
+.ctx.warn .ctx-bar i { background: #ffc56e; } .ctx.warn small { color: var(--busy); }
+.scard { margin: 8px 0 4px; padding: 8px 10px; border-radius: 10px; background: #ffffff08; display: grid; gap: 3px; font-size: 13px; } .scard small { color: var(--mute); }

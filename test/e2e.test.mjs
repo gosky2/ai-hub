@@ -54,7 +54,7 @@ test('init → start → hooks → sessions → tools → stop', async (t) => {
   assert.match(md, /우회하지 않습니다/);
   assert.doesNotMatch(md, /\{\{\w+\}\}/);
   const log = fs.readFileSync(path.join(tmp, 'claude.log'), 'utf8');
-  assert.match(log, new RegExp(`${path.join(ws, 'pm')} :: --bg -n \\[testbox\\] pm`));
+  assert.match(log, new RegExp(`${path.join(ws, 'pm')} :: --bg -n \\[testbox\\] pm --model opus --effort high`)); // role defaults from roles/roles.json
   assert.equal(aihub('session', 'add', 'pm').code, 1); // no duplicates
   assert.equal(aihub('session', 'add', 'x', '--role', 'nope').code, 1);
   // re-adding rewrites a CLAUDE.md aihub wrote, but never the user's own
@@ -76,9 +76,23 @@ test('init → start → hooks → sessions → tools → stop', async (t) => {
   assert.match(aihub('tool', 'add', 'deploy-dev', '--desc', 'ship it').out, /updated/);
   assert.match(aihub('tool', 'rm', 'deploy-dev').out, /removed/);
 
-  r = aihub('role', 'add', 'qa', '--from', 'dev'); assert.equal(r.code, 0, r.out);
-  assert.match(aihub('role', 'list').out, /^qa\s/m);
+  // work board: CLI, session script, and an @done line in a session message
+  r = aihub('task', 'new', 'Add /health', '--to', 'pm', '--when', 'test passes'); assert.equal(r.code, 0, r.out); assert.match(r.out, /^T1/);
+  const task = (...a) => spawnSync('sh', [path.join(claudeDir, 'hub-task.sh'), ...a], { env: { ...env, CLAUDE_CODE_SESSION_ID: 'abc-123' }, encoding: 'utf8' });
+  let ts = task('start', 'T1', 'on it'); assert.equal(ts.status, 0, ts.stderr); assert.match(ts.stdout, /T1 \[doing\]/);
+  ts = task('card', '--now', 'adding endpoint', '--todo', 'docs'); assert.equal(ts.status, 0, ts.stderr);
+  assert.match(aihub('card', 'pm').out, /now\s+adding endpoint/);
+  const say = (to, message) => spawnSync('sh', [path.join(claudeDir, 'hub-hook.sh')], { env, encoding: 'utf8', input: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'abc-123', tool_name: 'SendMessage', tool_input: { to, message } }) });
+  say('[testbox] api', '@done T1 | endpoint added | server/health.js | docs');
+  say('bridge:session_x', '@done T1 | endpoint added | server/health.js | docs'); // same message, second route
+  r = aihub('task', 'ls'); assert.match(r.out, /T1 \[done\] Add \/health — \[testbox\] PM \| endpoint added · 남은 것: docs \| server\/health\.js/);
+  assert.match(aihub('task', 'digest').out, /T1 \[done\]/);
+  assert.match(aihub('task', 'digest').out, /no changes/);
+  assert.equal(aihub('task', 'done', 'T99').code, 1);
 
+  r = aihub('role', 'add', 'qa', '--from', 'dev', '--effort', 'medium'); assert.equal(r.code, 0, r.out);
+  assert.match(aihub('role', 'list').out, /^qa\s+opus\s+medium/m);
+  
   r = aihub('hook', 'uninstall'); assert.equal(r.code, 0, r.out);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')).hooks, {});
   assert.match(aihub('stop').out, /hub stopped/);

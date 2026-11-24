@@ -44,8 +44,8 @@ else
 fi
 
 # 2) 스크립트
-for f in hub-hook.sh hub-todo.sh hub-file.sh; do curl -fsSL "$URL/$f" -o "$D/$f.new" && mv "$D/$f.new" "$D/$f"; done
-say "스크립트 받음: ~/.claude/hub-hook.sh, hub-todo.sh, hub-file.sh"
+for f in hub-hook.sh hub-todo.sh hub-file.sh hub-task.sh; do curl -fsSL "$URL/$f" -o "$D/$f.new" && mv "$D/$f.new" "$D/$f"; done
+say "스크립트 받음: ~/.claude/hub-hook.sh, hub-todo.sh, hub-file.sh, hub-task.sh"
 
 # 3) 훅(설정 합치기): python3 → python → node 중 되는 것으로
 S="$D/settings.json"

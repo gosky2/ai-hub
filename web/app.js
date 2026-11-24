@@ -46,7 +46,7 @@ async function load() {
   const d = await r.json();
   sessions.clear(); d.sessions.forEach((s) => sessions.set(s.key, s));
   events = d.events; hidden = d.hidden || {};
-  renderAll(); loadTodos(); loadTools();
+  renderAll(); loadTodos(); loadTasks(); loadCards(); loadTools();
   const last = [...events].reverse().find(isShown);
   if (last) setTick(last);
 }
@@ -56,6 +56,8 @@ function connect() {
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
     if (d.kind === 'todos') return loadTodos();
+    if (d.kind === 'tasks') return loadTasks();
+    if (d.kind === 'cards') return loadCards();
     if (d.kind === 'tools') return loadTools();
     if (d.kind === 'sessions') { d.sessions.forEach((s) => sessions.set(s.key, s)); if (d.hidden) hidden = d.hidden; return renderAll(); }
     if (d.session) sessions.set(d.session.key, d.session);
@@ -473,7 +475,8 @@ function openCard(k) {
     ${s.desc ? `<p class="np-desc">${esc(s.desc)}</p>` : ''}
     ${s.state === 'asleep' ? `<p class="np-sleep">허브 지시를 지금은 못 받아요(대기 끊김). 보내면 쌓아 두고 PM에게 깨우기를 부탁해요. <button type="button" data-np="wake" class="link-btn">지금 깨우기</button></p>` : ''}
     <dl class="np-info"><dt>상태</dt><dd>${esc(STATE_WORD[s.state])} · ${esc(s.machine)} · ${ago(s.last)}</dd>${s.doing ? `<dt>하는 일</dt><dd>${esc(first(s.doing))}</dd>` : ''}${modelBlock(s)}</dl>
-    <div class="np-act"><button type="button" data-np="send" class="primary">이 세션에 보내기</button><button type="button" data-np="rename">이름·설명</button><button type="button" data-np="hide">숨기기</button></div>`;
+    ${ctxBar(s, 'data-np')}${cardHtml(k)}
+    <div class="np-act"><button type="button" data-np="send" class="primary">이 세션에 보내기</button><button type="button" data-np="rename">이름·설명</button><button type="button" data-np="hide">숨기기</button><button type="button" data-np="refresh" title="카드를 정리해 같은 이름·폴더의 새 세션으로 넘기고 옛 세션은 멈춤">정리하고 새로 시작</button></div>`;
   pop.style.width = w + 'px';
   pop.style.left = Math.max(8, Math.min(mapBox.width - w - 8, c.x - w / 2)) + 'px';
   pop.hidden = false; pop.dataset.k = k;
@@ -496,6 +499,7 @@ $('nodePop').addEventListener('click', (ev) => {
     return;
   }
   pop.hidden = true;
+  if (b.dataset.np === 'refresh') return refreshSession(k);
   if (b.dataset.np === 'send') pickTarget(k); else if (b.dataset.np === 'rename') renameCard(k); else if (b.dataset.np === 'hide') hideCard(k);
 });
 const wakeWord = (d) => d.awake ? '이미 깨어 있음' : !d.waker ? 'PM이 없어 못 깨움' : !d.targets?.length ? '방금 부탁함(10분 뒤 다시)' : `${d.waker}에게 깨우기 부탁 ${d.targets.length}개${d.pmAsleep ? (d.pmWaker ? ` · PM은 ${d.pmWaker}가 먼저 깨움` : ' · PM도 끊겼고 깨울 세션이 없음(그 PC에서 직접)') : ''}`;
@@ -643,7 +647,8 @@ function renderChat() {
     if (e.type === 'prompt' || e.type === 'ask' || e.type === 'reply' || e.type === 'todo') return keyOf(e) === V;
     const pr = pair(e); return !!pr && pr.includes(V);
   };
-  const list = events.filter((e) => isChat(e) && e.text && mineView(e) && !(e.type === 'file' && String(e.to || '').startsWith('첨부/')) && !(e.type === 'prompt' && (HUB_ASK.test(e.text) || !stripSys(e.text)))).slice(-300), box = $('chatList');
+  const dups = dupIds();
+  const list = events.filter((e) => isChat(e) && e.text && !dups.has(e.id) && mineView(e) && !(e.type === 'file' && String(e.to || '').startsWith('첨부/')) && !(e.type === 'prompt' && (HUB_ASK.test(e.text) || !stripSys(e.text)))).slice(-300), box = $('chatList');
   // 다시 그릴지: 개수만 보면 300개(slice)가 꽉 찬 뒤엔 늘 같아서 새 말풍선이 안 그려졌음 → 마지막 이벤트 id까지 봄(+ 보는 에이전트)
   const sig = `${V}:${list.length}:${list[list.length - 1]?.id ?? 0}`;
   if (sig === chatCount) return;
@@ -666,10 +671,10 @@ function renderChat() {
       const n = th.answers.get(e.id);
       status = n ? `<span class="st ok">✓ 답${n > 1 ? ' ' + n + '개' : ''}</span>` : Date.now() - e.ts < 3 * 3600e3 ? '<span class="st wait">처리 중…</span>' : '';
     }
-    const bb = `<div class="row"><div class="bb" data-id="${e.id}">${md(pv.text)}${attHtml(atts)}${pv.more ? `<button type="button" class="more" data-more>전체 보기${pv.code ? ' · 코드 있음' : ''}</button>` : ''}</div><time>${clock(e.ts)}</time></div>`;
+    const bb = `<div class="row"><div class="bb" data-id="${e.id}">${protoHtml(pv.text) ?? md(pv.text)}${attHtml(atts)}${pv.more ? `<button type="button" class="more" data-more>전체 보기${pv.code ? ' · 코드 있음' : ''}</button>` : ''}</div><time>${clock(e.ts)}</time></div>`;
     const pmKey = (key) => isPM(sessions.get(key));
     // 다른 에이전트와 주고받은 것: 얇은 한 줄(누르면 펼침)
-    const thin = (other, word) => `<li class="cm thin" data-eid="${e.id}"><details><summary><span class="who">↔ <b>${esc(nameOf(other))}</b>${word} · ${clock(e.ts)}</span><span class="sum">${esc(first(text).replace(/^\[[^\]]*\]\s*/, '').slice(0, 50))}</span></summary>${quote}${bb}</details></li>`;
+    const thin = (other, word) => `<li class="cm thin" data-eid="${e.id}"><details><summary><span class="who">↔ <b>${esc(nameOf(other))}</b>${word} · ${clock(e.ts)}</span><span class="sum">${esc((protoSum(text) || first(text).replace(/^\[[^\]]*\]\s*/, '')).slice(0, 50))}</span></summary>${quote}${bb}</details></li>`;
     if (V && fromPeer(e)) { const r = byId.get(e.ref), from = r && resolve(r.to); return thin(from || k, ' 요청에 답함'); }
     if (V && (e.type === 'send' || e.type === 'receive')) {
       const pr = pair(e), out = pr[0] === V, other = out ? pr[1] : pr[0], vPM = pmKey(V);
@@ -682,7 +687,7 @@ function renderChat() {
     // 세션끼리: PM이 맡긴 일 / PM에게 온 보고는 구분해서 작게
     const [x, y] = pair(e), kind = pmKey(x) ? ['delegate', '맡김'] : pmKey(y) ? ['report', '보고'] : ['', ''];
     if (kind[0]) // PM이 맡긴 일·PM에게 온 보고는 한 줄 요약으로 접어 둠(누르면 펼침)
-      return `<li class="cm peer ${kind[0]} compact" data-eid="${e.id}"><details><summary><span class="tag ${kind[0]}">${kind[1]}</span> <b>${esc(nameOf(kind[0] === 'delegate' ? y : x))}</b><span class="sum">${esc(first(text).replace(/^\[[^\]]*\]\s*/, '').slice(0, 60))}</span>${e.type === 'send' ? status : ''}<time>${clock(e.ts)}</time></summary>${quote}${bb}</details></li>`;
+      return `<li class="cm peer ${kind[0]} compact" data-eid="${e.id}"><details><summary><span class="tag ${kind[0]}">${kind[1]}</span> <b>${esc(nameOf(kind[0] === 'delegate' ? y : x))}</b><span class="sum">${esc((protoSum(text) || first(text).replace(/^\[[^\]]*\]\s*/, '')).slice(0, 60))}</span>${e.type === 'send' ? status : ''}<time>${clock(e.ts)}</time></summary>${quote}${bb}</details></li>`;
     return `<li class="cm peer" data-eid="${e.id}"><span class="av">${esc(initial(nameOf(x)))}</span><span class="nm">${esc(nameOf(x))}<i>→</i>${esc(nameOf(y))} ${e.type === 'send' ? status : ''}</span>${quote}${bb}</li>`;
   });
   // 연달아 나온 '파일 올림' 줄은 한 줄로 접음("파일 3개 올림 ▸")
@@ -810,9 +815,9 @@ function agentRow(s, compact) {
   const doing = (s.doing ? `${STATE_WORD[s.state]} — ${first(s.doing)}` : STATE_WORD[s.state]) + woke;
   return `<li class="ag ${s.state}${isPM(s) ? ' pm' : ''}"><button type="button" data-k="${esc(s.key)}">
     <span class="dot ${s.state}"></span>
-    <span class="ag-main"><b>${isPM(s) ? '<span class="ag-pm">PM</span>' : ''}${esc(label(s))}</b>${s.desc ? `<span class="ag-desc">${esc(s.desc)}</span>` : ''}${compact ? '' : `<span class="ag-doing">${esc(doing)}</span>`}</span>
+    <span class="ag-main"><b>${isPM(s) ? '<span class="ag-pm">PM</span>' : ''}${esc(label(s))}</b>${s.desc ? `<span class="ag-desc">${esc(s.desc)}</span>` : ''}${compact ? '' : `<span class="ag-doing">${esc(doing)}</span>${ctxBar(s)}`}</span>
     <span class="ag-meta">${esc(s.machine)}${s.model ? ` · ${esc(modelName(s.model))}` : ''}<br>${ago(s.last)}</span></button>
-    <div class="ag-act" hidden><button type="button" data-ag="send" class="primary">이 세션에 보내기</button><button type="button" data-ag="map">지도에서 보기</button><button type="button" data-ag="rename">이름·설명</button><button type="button" data-ag="hide">숨기기</button>${s.state === 'asleep' ? '<button type="button" data-ag="wake">깨우기</button>' : ''}</div></li>`;
+    <div class="ag-act" hidden><button type="button" data-ag="send" class="primary">이 세션에 보내기</button><button type="button" data-ag="map">지도에서 보기</button><button type="button" data-ag="rename">이름·설명</button><button type="button" data-ag="hide">숨기기</button><button type="button" data-ag="refresh">정리하고 새로 시작</button>${s.state === 'asleep' ? '<button type="button" data-ag="wake">깨우기</button>' : ''}</div></li>`;
 }
 function renderAgents(ordered) {
   const on = ordered.filter((s) => s.state !== 'offline'), off = ordered.filter((s) => s.state === 'offline'), busy = on.filter((s) => s.state === 'busy').length;
@@ -843,6 +848,7 @@ $('agentsPanel').addEventListener('click', (ev) => {
     if (act.dataset.ag === 'send') pickTarget(k);
     else if (act.dataset.ag === 'rename') renameCard(k);
     else if (act.dataset.ag === 'hide') hideCard(k);
+    else if (act.dataset.ag === 'refresh') refreshSession(k);
     else if (act.dataset.ag === 'map') { setTab('board'); const el = cards.get(k)?.el; if (el) { el.classList.remove('spot'); void el.offsetWidth; el.classList.add('spot'); setTimeout(() => openCard(k), 300); } }
     return;
   }
@@ -1300,7 +1306,7 @@ function renderTodos() {
     const ap = t.kind === 'approve', note = t.note || '', rejected = ap && note.startsWith('거절'), memo = note.replace(/^(진행|거절):?\s*/, '');
     const doneLine = ap ? `${rejected ? '✕ 거절함' : '✓ 진행함'} · ${ago(t.done_ts)}${memo ? ' — ' + esc(memo) : ''}`
       : `✓ ${ago(t.done_ts)} 체크${note ? ' — ' + esc(note) : ''} <button type="button" data-undo>되돌리기</button>`;
-    const act = ap ? `<input type="text" placeholder="메모(선택): 예) 768P 하나만" aria-label="세션에게 남길 메모"><button type="button" data-done class="go">진행</button><button type="button" data-drop class="td-drop no">거절</button>`
+    const act = ap ? `<input type="text" placeholder="메모(선택): 예) 하나만 먼저" aria-label="세션에게 남길 메모"><button type="button" data-done class="go">진행</button><button type="button" data-drop class="td-drop no">거절</button>`
       : `<input type="text" placeholder="메모(선택): 예) 넣었음, 비번은 따로 줌" aria-label="세션에게 남길 메모"><button type="button" data-done>했어요</button><button type="button" data-drop class="td-drop" title="세션에 알리지 않고 뺌">필요 없음</button>`;
     return `<li class="td${ap ? ' approve' : ''}${t.done_ts ? ' done' : ''}${rejected ? ' rejected' : ''}" data-id="${t.id}">
       <div class="td-head"><span class="td-from">${ap ? '<span class="td-kind" title="승인 요청">🔐 승인</span> ' : ''}${esc(who(t))}</span><time>${ago(t.ts)}</time></div>
@@ -1349,7 +1355,7 @@ function buildJobs() {
   const jobs = [];
   for (const e of events) {
     if (e.type !== 'ask' && e.type !== 'send') continue;
-    if (JOB_SKIP.test(e.text || '')) continue;
+    if (JOB_SKIP.test(e.text || '') || dupIds().has(e.id)) continue; // 같은 글을 두 길로 보낸 것은 한 줄
     if (e.type === 'ask' && e.ref) continue; // 추가 요청은 원래 일 줄에 묶음
     const pr = pair(e); if (!pr || isHidden(pr[1])) continue;
     const [from, to] = pr;
@@ -1494,6 +1500,7 @@ function setSide(s) {
   document.querySelectorAll('.side-tabs button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.side === s)));
   if (s === 'files') loadFiles();
   if (s === 'todo') loadTodos();
+  if (s === 'tasks') { loadTasks(); seeTasks(); }
   if (s === 'jobs') renderJobs();
   if (s === 'chat' && chatAtBottom) requestAnimationFrame(chatToBottom); // 가려져 있던 대화 칸이 보이면 맨 아래로
 }
@@ -1593,3 +1600,79 @@ $('toolForm').onsubmit = async (ev) => {
   $('toolDlg').close(); loadTools();
 };
 $('tlCancel').onclick = () => $('toolDlg').close();
+
+// ---- 세션 작업(T번호 보드) · 짧은 메시지 규격 카드 · 같은 메시지 두 길 합치기 · 세션 카드 · 컨텍스트 막대 ----
+// 같은 세션이 같은 글을 여러 길(bridge·uds 이름)로 보낸 것: 같은 보낸 쪽·받는 쪽·글이 2분 안에 또 오면 뒤엣것을 숨김
+let dupCache = { sig: '', set: new Set() };
+function dupIds() {
+  const sig = `${events.length}:${events[events.length - 1]?.id ?? 0}`;
+  if (dupCache.sig === sig) return dupCache.set;
+  const seen = new Map(), set = new Set();
+  for (const e of events) {
+    if (e.type !== 'send' && e.type !== 'receive') continue;
+    // 같은 보낸 쪽(받음이면 받는 쪽)·같은 글이 2분 안에 또: 상대가 같거나, 한쪽이 아직 모르는 주소(bridge:·uds 등 유령)면 같은 메시지로 봄. 다른 세션 여럿에 보낸 건 그대로
+    const pr = pair(e), me = pr ? (e.type === 'send' ? pr[0] : pr[1]) : keyOf(e), other = pr ? (e.type === 'send' ? pr[1] : pr[0]) : '';
+    const k = `${e.type}|${me}|${String(e.text || '').replace(/\s+/g, ' ').trim().slice(0, 300)}`, p = seen.get(k);
+    if (p && e.ts - p.ts < 120e3 && (p.other === other || p.other.startsWith('g:') || other.startsWith('g:'))) set.add(e.id); else seen.set(k, { ts: e.ts, other });
+  }
+  dupCache = { sig, set }; return set;
+}
+// "@task T12 → 받는세션 | 우선:높음 / 목표 / 완료조건 / 보고", "@done|@block|@ask T12 | 결과 | 위치 | 남은 것" → 사람이 읽기 쉬운 카드
+const PROTO = /^\s*@(task|done|block|ask)\s+T(\d+)\b\s*(.*)$/i, PROTO_WORD = { task: '맡김', done: '끝남', block: '막힘', ask: '질문' };
+function protoParts(m) {
+  const op = m[1].toLowerCase();
+  if (op === 'task') {
+    const [to, ...f] = m[3].replace(/^\s*(→|->)\s*/, '').split('|'), rest = f.join('|').trim();
+    const lab = ['우선', '목표', '완료 조건', '보고'];
+    return { op, to: to.trim(), rows: (rest ? rest.split(/\s+\/\s+/) : []).map((x, i) => [lab[i] || '메모', x.replace(/^우선\s*[:：]\s*/, '').trim()]) };
+  }
+  const f = m[3].replace(/^\s*\|\s*/, '').split(/\s*\|\s*/);
+  return { op, rows: [[op === 'ask' ? '질문' : '결과', f[0]], ['위치', f[1]], ['남은 것', f[2]]].filter((r) => r[1]) };
+}
+function protoHtml(text) {
+  const cards = [], rest = [];
+  for (const l of String(text || '').split('\n')) {
+    const m = PROTO.exec(l); if (!m) { rest.push(l); continue; }
+    const p = protoParts(m);
+    cards.push(`<div class="proto ${p.op}"><div class="proto-h"><span class="proto-op">${PROTO_WORD[p.op]}</span><button type="button" class="proto-t" data-task="${m[2]}">T${m[2]}</button>${p.to ? `<span class="proto-to">→ ${esc(p.to)}</span>` : ''}</div>${p.rows.map(([k, v]) => `<div class="proto-r"><span>${k}</span>${esc(v)}</div>`).join('')}</div>`);
+  }
+  if (!cards.length) return null;
+  const r = rest.join('\n').trim();
+  return cards.join('') + (r ? md(r) : '');
+}
+const protoSum = (text) => { const m = PROTO.exec(first(text)); if (!m) return null; const p = protoParts(m); return `T${m[2]} ${PROTO_WORD[p.op]}${p.to ? ' → ' + p.to : ''}${p.rows[0] ? ': ' + p.rows[p.op === 'task' ? 1 : 0]?.[1] : ''}`; };
+
+let taskRows = [], scards = {}, tasksSeen = 0;
+try { tasksSeen = +localStorage.getItem('tasksSeen') || 0; } catch {}
+async function loadTasks() { const r = await api('tasks').catch(() => null); if (!r?.ok) return; taskRows = (await r.json()).tasks; renderTasks(); }
+async function loadCards() { const r = await api('cards').catch(() => null); if (!r?.ok) return; scards = (await r.json()).cards; }
+const TASK_WORD = { todo: '할 것', doing: '하는 중', block: '막힘', done: '끝남' };
+function renderTasks() {
+  const fresh = taskRows.filter((t) => t.updated > tasksSeen && t.by !== '나').length;
+  document.querySelectorAll('[data-task-count]').forEach((b) => (b.textContent = fresh || ''));
+  const owner = (t) => (t.owner && sessions.has(t.owner) ? nameOf(t.owner) : t.owner_name || '담당 없음');
+  const row = (t) => `<li class="tk ${t.state}${t.updated > tasksSeen ? ' fresh' : ''}" data-id="${t.id}"><div class="tk-head"><b>T${t.id}</b><span class="tk-st ${t.state}">${TASK_WORD[t.state] || esc(t.state)}</span><span class="tk-who">${esc(owner(t))}</span><time>${ago(t.updated)}</time></div>
+    <div class="tk-title">${esc(t.title)}</div>${[['완료 조건', t.done_when], ['결과', t.result], ['위치', t.paths]].filter((x) => x[1]).map(([k, v]) => `<div class="tk-f"><span>${k}</span>${esc(v)}</div>`).join('')}</li>`;
+  const html = ['block', 'doing', 'todo', 'done'].map((st) => { const l = taskRows.filter((t) => t.state === st); return l.length ? `<li class="tk-sep">${TASK_WORD[st]} ${l.length}</li>${l.map(row).join('')}` : ''; }).join('');
+  $('taskList').innerHTML = html || '<li class="empty">세션 작업이 없습니다. 세션이 <code>sh ~/.claude/hub-task.sh new "제목"</code>으로 만들거나, 메시지에 <code>@task T번호 → 세션</code>을 쓰면 여기에 뜹니다.</li>';
+  $('taskFresh').textContent = fresh ? `마지막으로 본 뒤 바뀐 것 ${fresh}개` : '';
+}
+function seeTasks() { tasksSeen = Date.now(); try { localStorage.setItem('tasksSeen', String(tasksSeen)); } catch {} setTimeout(renderTasks, 4000); } // 4초 동안은 새로 바뀐 줄을 강조해 보여 줌
+function jumpTask(id) { setTab('tasks'); requestAnimationFrame(() => { const li = $('taskList').querySelector(`li[data-id="${id}"]`); if (li) { li.scrollIntoView({ block: 'center' }); li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); } }); }
+document.addEventListener('click', (ev) => { const b = ev.target.closest('.proto-t[data-task]'); if (b) { ev.preventDefault(); ev.stopPropagation(); jumpTask(b.dataset.task); } }, true);
+
+// 컨텍스트 막대: 마지막 요청 입력 토큰(= 지금 대화 길이). 기준(75%)을 넘으면 '요약해서 새로 시작' 권함
+const ctxMax = (s) => (/\[1m\]/i.test(s.model || '') ? 1e6 : 200e3);
+function ctxBar(s, act) {
+  if (!s?.ctx) return '';
+  const max = ctxMax(s), pct = Math.min(100, Math.round((s.ctx / max) * 100)), warn = pct >= 75;
+  return `<div class="ctx${warn ? ' warn' : ''}" title="대화 길이(컨텍스트) ${tokFmt(s.ctx)} / ${tokFmt(max)}"><span class="ctx-bar"><i style="width:${pct}%"></i></span><small>대화 ${pct}%</small>${warn && act ? `<button type="button" ${act}="refresh" class="link-btn">요약해서 새로 시작할까요?</button>` : ''}</div>`;
+}
+const cardHtml = (k) => { const c = scards[k]; if (!c) return ''; const rows = [['지금', c.now], ['정한 것', c.decided], ['남은 일', c.todo], ['중요 파일', c.files]].filter((r) => r[1]); return rows.length ? `<div class="scard"><b>세션 카드</b> <small>${ago(c.ts)}</small>${rows.map(([a, b]) => `<div class="proto-r"><span>${a}</span>${esc(b)}</div>`).join('')}</div>` : ''; };
+async function refreshSession(k) {
+  const s = sessions.get(k); if (!s) return;
+  if (!confirm(`${label(s)}을(를) 정리하고 새로 시작할까요?\n\n1) 그 세션이 세션 카드(지금 하는 일·정한 것·남은 일·중요 파일)를 최신으로 고칩니다.\n2) 같은 이름·폴더로 새 세션을 띄워 카드를 넘깁니다.\n3) 옛 세션은 30초 뒤 멈춥니다(대화 기록은 남음).`)) return;
+  const r = await api('refresh', { method: 'POST', body: JSON.stringify({ key: k }) }).catch(() => null);
+  const d = r ? await r.json().catch(() => ({})) : {};
+  alert(!r?.ok ? d.error || '보내지 못했습니다' : d.waiting ? `요청을 쌓아 뒀어요. 세션이 지금 일을 끝내면 시작합니다${d.waker ? ` (대기 끊김이라 ${d.waker}에게 깨우기 부탁)` : ''}.` : '요청을 보냈어요. 새 세션이 뜨면 이 카드가 그쪽으로 바뀝니다.');
+}

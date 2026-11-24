@@ -1,6 +1,6 @@
 {
   "name": "ai-hub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A small self-hosted hub for your Claude Code sessions: see what each session is doing, send instructions, share files, and manage roles and tools from one page.",
   "license": "MIT",
   "type": "module",

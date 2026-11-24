@@ -14,6 +14,8 @@ When you run several Claude Code sessions with different jobs (PM, dev, ops, des
 - **Chat**: your conversation with the selected session (PM by default), attachments, `@tool` mentions
 - **Progress**: one line per job (sent / in progress / done) and estimated token usage per session
 - **To-do**: things a session needs you to do (approve, log in, pay…). Tick it and the session continues
+- **Work board**: T-numbered tasks sessions hand each other, updated by one-line `@task` / `@done` messages; the PM reads only what changed
+- **Session cards**: now / decided / todo / key files per session; "refresh" hands a long conversation over to a fresh session with the same name and folder
 - **Files**: folders, previews, drag-and-drop upload, move, expiring share links
 - **Tools**: write down how-tos and commands once, attach them to instructions
 - **`aihub` CLI**: set up the hub, install hooks, and start / wake / stop background sessions that carry a role (CLAUDE.md)
@@ -41,7 +43,7 @@ Other machines: make the hub reachable (`PUBLIC_URL` and `HOST` in `.env`, ideal
 
 ## Docs
 
-The detailed docs are in Korean, each with an English summary at the top: [install](docs/install.md), [usage](docs/usage.md), [concepts](docs/concepts.md), [architecture](docs/architecture.md), [Claude integration](docs/claude-integration.md), [security](docs/security.md), [FAQ](docs/faq.md), [contributing](CONTRIBUTING.md), [changelog](CHANGELOG.md), [third-party licenses](THIRD_PARTY_LICENSES.md).
+The detailed docs are in Korean, each with an English summary at the top: [install](docs/install.md), [usage](docs/usage.md), [concepts](docs/concepts.md), [work board](docs/tasks.md), [architecture](docs/architecture.md), [Claude integration](docs/claude-integration.md), [security](docs/security.md), [FAQ](docs/faq.md), [contributing](CONTRIBUTING.md), [changelog](CHANGELOG.md), [third-party licenses](THIRD_PARTY_LICENSES.md).
 
 ## Status
 

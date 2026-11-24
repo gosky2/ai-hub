@@ -14,7 +14,7 @@ const HOME = os.homedir();
 const CLAUDE_DIR = process.env.AIHUB_CLAUDE_DIR || path.join(HOME, '.claude'); // tests point this at a temp dir
 const CLAUDE = process.env.AIHUB_CLAUDE_BIN || 'claude';
 const STATE_DIR = path.join(ROOT, '.aihub');
-const HOOK_FILES = ['hub-hook.sh', 'hub-todo.sh', 'hub-file.sh'];
+const HOOK_FILES = ['hub-hook.sh', 'hub-todo.sh', 'hub-file.sh', 'hub-task.sh'];
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _.-]{0,39}$/u;
 const BASE_MARK = '## 공통 규칙 (모든 역할)'; // first heading of roles/_base.md, marks a CLAUDE.md written by aihub
 
@@ -232,12 +232,19 @@ function roles() {
     return { name: f.slice(0, -3), title: (/^>\s*(.*)$/m.exec(text)?.[1] || '').trim(), file: path.join(dir, f) };
   });
 }
+// roles/roles.json: { "<role>": { "model": "sonnet", "effort": "low" } } — defaults for session add/wake
+export function roleDefaults(cfg, role, opt = {}) {
+  const d = (cfg && cfg[role]) || {};
+  const model = opt.model !== undefined ? String(opt.model) : d.model, effort = opt.effort !== undefined ? String(opt.effort) : d.effort;
+  return [...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])];
+}
+const roleCfg = () => readJson(path.join(config().rolesDir, 'roles.json'), {});
 export function renderRole(base, role, vars) {
   return `${role.trim()}\n\n${base.trim()}\n`.replace(/\{\{(\w+)\}\}/g, (m, k) => vars[k] ?? m);
 }
 function cmdRole(sub, pos, opt) {
   const c = config();
-  if (!sub || sub === 'list') { for (const r of roles()) out(`${r.name.padEnd(10)} ${r.title}`); return; }
+  if (!sub || sub === 'list') { const rc = roleCfg(); for (const r of roles()) { const d = rc[r.name] || {}; out(`${r.name.padEnd(10)} ${(d.model || '-').padEnd(7)} ${(d.effort || '-').padEnd(7)} ${r.title}`); } return; }
   if (sub === 'show') {
     const r = roles().find((x) => x.name === pos[0]); if (!r) die(`no role "${pos[0]}" (aihub role list)`);
     return out(renderRole(fs.readFileSync(path.join(c.rolesDir, '_base.md'), 'utf8'), fs.readFileSync(r.file, 'utf8'), { name: displayName(c.machine, '<name>'), machine: c.machine, role: r.name, hubUrl: c.hubUrl }));
@@ -248,6 +255,7 @@ function cmdRole(sub, pos, opt) {
     const from = opt.from ? path.join(c.rolesDir, `${opt.from}.md`) : null;
     if (from && !fs.existsSync(from)) die(`no role "${opt.from}"`);
     fs.writeFileSync(f, from ? fs.readFileSync(from, 'utf8') : `# {{name}}\n\n> ${name}\n\n## 하는 일\n- \n\n## 하지 않는 일\n- \n`);
+    if (opt.model || opt.effort || opt.from) { const rc = roleCfg(), d = { ...(opt.from ? rc[opt.from] : {}) }; if (opt.model) d.model = String(opt.model); if (opt.effort) d.effort = String(opt.effort); rc[name] = d; writeJson(path.join(c.rolesDir, 'roles.json'), rc); }
     return out(`created ${f} — edit it, then: aihub session add <name> --role ${name}`);
   }
   die('usage: aihub role list | show <role> | add <name> [--from <role>]');
@@ -283,7 +291,7 @@ async function cmdSession(sub, pos, opt) {
     } else fs.writeFileSync(md, text);
     if (!hookInstalled()) out('warning: hub hooks are not installed on this machine, so the session will not show up in the hub (aihub hook install)');
     const prompt = String(opt.prompt || `AI 허브 세션 "${full}"(역할: ${roleName})로 시작합니다. CLAUDE.md를 읽고 한 줄로 '준비됨'만 답하세요.`);
-    const args = ['--bg', '-n', full, ...(opt.rc ? ['--remote-control', full] : []), ...(opt.model ? ['--model', String(opt.model)] : []), ...(c.claudeArgs || []), prompt];
+    const args = ['--bg', '-n', full, ...(opt.rc ? ['--remote-control', full] : []), ...roleDefaults(roleCfg(), roleName, opt), ...(c.claudeArgs || []), prompt];
     let r = spawnSync(CLAUDE, args, { cwd: dir, encoding: 'utf8' });
     // Claude Code asks once per folder whether you trust it. aihub does not answer that for you: it opens Claude there so you can.
     if (r.status !== 0 && /not trusted/i.test(r.stderr || '')) {
@@ -326,7 +334,7 @@ async function cmdSession(sub, pos, opt) {
     const hs = a?.sessionId ? null : await hubSessions();
     const sid = a?.sessionId || s.sessionId || hs?.filter((x) => same(x.name, s.display)).sort((x, y) => y.last - x.last)[0]?.session;
     if (!sid) die('cannot find the Claude session id to resume — start it again with: aihub session add <name> --force');
-    const r = spawnSync(CLAUDE, ['--bg', '--resume', sid, String(opt.prompt || '허브에서 다시 깨움. 한 줄로 \'준비됨\'만 답하세요.')], { cwd: s.dir, encoding: 'utf8' });
+    const r = spawnSync(CLAUDE, ['--bg', '--resume', sid, ...roleDefaults(roleCfg(), s.role, opt), String(opt.prompt || '허브에서 다시 깨움. 한 줄로 \'준비됨\'만 답하세요.')], { cwd: s.dir, encoding: 'utf8' });
     if (r.error || r.status !== 0) die(`claude did not resume: ${(r.stderr || r.error?.message || '').trim().slice(0, 400)}`);
     s.bgId = bgIdOf(r.stdout) || s.bgId; s.sessionId = sid; writeJson(sessionsFile(), reg);
     return out(`woke "${s.display}"`);
@@ -338,8 +346,15 @@ async function cmdSession(sub, pos, opt) {
     const r = await hub('ask', { method: 'POST', body: JSON.stringify({ to: h.key, text }) });
     return out(r.waiting ? 'queued — the session picks it up when it is free' : 'delivered');
   }
+  if (sub === 'refresh') { // same as the hub's '정리하고 새로 시작': the session updates its card and hands off with hub-task.sh handoff
+    const s = find(pos[0]);
+    const h = (await hub('state')).sessions.filter((x) => same(x.name, s.display) && x.state !== 'offline').sort((a, b) => b.last - a.last)[0];
+    if (!h) die(`"${s.display}" is not connected to the hub (aihub session wake ${pos[0]})`);
+    const r = await hub('refresh', { method: 'POST', body: JSON.stringify({ key: h.key }) });
+    return out(r.waiting ? 'refresh queued — the session does it when it is free' : 'refresh sent — the session updates its card and hands off to a new session');
+  }
   if (sub === 'rm') { const s = find(pos[0]); delete reg[pos[0]]; writeJson(sessionsFile(), reg); return out(`forgot "${s.display}" (folder ${s.dir} and its Claude conversation are kept)`); }
-  die('usage: aihub session add|list|send|wake|stop|rm');
+  die('usage: aihub session add|list|send|wake|refresh|stop|rm');
 }
 
 // ---------- tools (shared how-tos, attached to instructions with @name) ----------
@@ -367,6 +382,38 @@ async function cmdTool(sub, pos, opt) {
     await hub(`tools/${t.id}`, { method: 'DELETE' }); return out(`removed @${t.name}`);
   }
   die('usage: aihub tool list | add <name> ... | rm <name>');
+}
+
+// ---------- session work board (T numbers) and session cards ----------
+async function cmdTask(sub, pos, opt) {
+  const body = (o) => ({ method: 'POST', body: JSON.stringify(o) });
+  if (!sub || sub === 'ls' || sub === 'list') { const { tasks } = await hub('tasks'); if (!tasks.length) return out('no tasks — aihub task new "title" --to <session>'); for (const t of tasks) out(taskLine(t)); return; }
+  if (sub === 'digest') { // only what changed since the last digest (kept in .aihub/digest.json)
+    const f = path.join(STATE_DIR, 'digest.json'), since = readJson(f, {}).since || 0;
+    const { tasks, now } = await hub(`tasks?since=${since}`); writeJson(f, { since: now });
+    return out(tasks.length ? tasks.map(taskLine).join('\n') : '(no changes)');
+  }
+  const owner = async (n) => { if (!n) return undefined; const disp = readJson(sessionsFile(), {})[n]?.display || n; return (await hub('state')).sessions.find((x) => x.key === n || same(x.name, disp))?.key || die(`no hub session "${n}"`); };
+  if (sub === 'new') {
+    if (!pos[0]) die('usage: aihub task new "title" [--to <session>] [--when "done when"] [--paths "…"] [--start]');
+    const r = await hub('tasks', body({ op: 'new', title: pos[0], owner: await owner(opt.to), done_when: opt.when, paths: opt.paths, start: !!opt.start }));
+    return out(r.task);
+  }
+  if (['start', 'done', 'block', 'ask', 'todo'].includes(sub)) {
+    if (!pos[0]) die(`usage: aihub task ${sub} T12 ["one line"] [--paths "…"]`);
+    const r = await hub('tasks', body({ op: sub, id: pos[0], note: pos[1], paths: opt.paths }));
+    return out(r.task);
+  }
+  die('usage: aihub task ls | digest | new "title" [--to s] [--when ..] | start|done|block|ask T12 ["note"]');
+}
+export const taskLine = (t) => `T${t.id} [${t.state}] ${t.title}${t.owner_name ? ` — ${t.owner_name}` : ''}${t.result ? ` | ${t.result}` : ''}${t.paths ? ` | ${t.paths}` : ''}`;
+async function cmdCard(pos) {
+  const n = pos[0]; if (!n) die('usage: aihub card <session>');
+  const disp = readJson(sessionsFile(), {})[n]?.display || n;
+  const h = (await hub('state')).sessions.filter((x) => x.key === n || same(x.name, disp)).sort((a, b) => b.last - a.last)[0]; if (!h) die(`no hub session "${n}"`);
+  const { cards } = await hub('cards'), c = cards[h.key];
+  if (!c) return out(`no card yet for ${h.name || h.key} (the session writes it with: sh ~/.claude/hub-task.sh card --now .. --todo ..)`);
+  for (const [k, v] of [['now', c.now], ['decided', c.decided], ['todo', c.todo], ['files', c.files]]) if (v) out(`${k.padEnd(8)} ${v}`);
 }
 
 // ---------- doctor ----------
@@ -398,16 +445,24 @@ setup
   aihub join-command               print the one-liner that connects another machine
 
 sessions (Claude Code background sessions with a role)
-  aihub session add <name> --role <role> [--dir DIR] [--rc] [--model M] [--prompt TEXT] [--trust] [--force]
+  aihub session add <name> --role <role> [--dir DIR] [--rc] [--model M] [--effort E] [--prompt TEXT] [--trust] [--force]
+                                   model and effort default to the role's entry in roles/roles.json
                                    --trust: if Claude has not been allowed in DIR yet, open it there so you can accept
   aihub session list               sessions started here, with Claude and hub state
   aihub session send <name> TEXT   send an instruction through the hub
   aihub session wake <name>        resume a stopped or asleep session in the background
+  aihub session refresh <name>     tidy up and restart: the session updates its card, hands off to a new session, stops
   aihub session stop <name>        stop it (the conversation is kept)
   aihub session rm <name>          forget it here (folder and conversation are kept)
 
+work board and cards (sessions update them with ~/.claude/hub-task.sh, or @task/@done lines in messages)
+  aihub task ls | digest           open tasks / only what changed since the last digest
+  aihub task new "title" [--to <session>] [--when "done when"] [--paths ..] [--start]
+  aihub task start|done|block|ask T12 ["one line"] [--paths ..]
+  aihub card <session>             the session's card (now / decided / todo / files)
+
 roles and tools
-  aihub role list | show <role> | add <name> [--from <role>]
+  aihub role list | show <role> | add <name> [--from <role>] [--model M] [--effort E]
   aihub tool list | add <name> --desc .. --how .. [--example ..] [--links ..] [--target <session>] | rm <name>
 `;
 
@@ -426,6 +481,8 @@ export async function main(argv) {
     case 'role': case 'roles': return cmdRole(sub, pos, opt);
     case 'session': case 'sessions': return cmdSession(sub, pos, opt);
     case 'tool': case 'tools': return cmdTool(sub, pos, opt);
+    case 'task': case 'tasks': return cmdTask(sub, pos, opt);
+    case 'card': return cmdCard([sub, ...pos].filter(Boolean));
     case undefined: case 'help': case '-h': case '--help': return out(HELP);
     case '--version': case '-v': return out(readJson(path.join(ROOT, 'package.json'), {}).version);
     default: die(`unknown command "${cmd}"\n\n${HELP}`);

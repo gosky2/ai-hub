@@ -1,7 +1,7 @@
 // Unit tests for the pure parts of the CLI.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseArgs, parseEnv, makeEnv, mergeHooks, removeHooks, renderRole, displayName } from '../cli/aihub.mjs';
+import { parseArgs, parseEnv, makeEnv, mergeHooks, removeHooks, renderRole, displayName, roleDefaults, taskLine } from '../cli/aihub.mjs';
 
 test('parseArgs: positionals, --k v, --k=v, flags', () => {
   const { pos, opt } = parseArgs(['pm', '--role', 'pm', '--rc', '--dir=/tmp/x y', '--', '--not-an-opt']);
@@ -40,4 +40,15 @@ test('mergeHooks adds five events once and keeps other hooks', () => {
 test('renderRole puts the role first, base after, and fills placeholders', () => {
   const t = renderRole('base for {{name}} ({{role}}) {{unknown}}', '# {{name}}\n> r', { name: displayName('laptop', 'pm'), role: 'pm' });
   assert.equal(t, '# [laptop] pm\n> r\n\nbase for [laptop] pm (pm) {{unknown}}\n');
+});
+
+test('roleDefaults: role entry, overridden by flags', () => {
+  const cfg = { docs: { model: 'sonnet', effort: 'low' } };
+  assert.deepEqual(roleDefaults(cfg, 'docs'), ['--model', 'sonnet', '--effort', 'low']);
+  assert.deepEqual(roleDefaults(cfg, 'docs', { model: 'opus' }), ['--model', 'opus', '--effort', 'low']);
+  assert.deepEqual(roleDefaults(cfg, 'none'), []);
+});
+
+test('taskLine', () => {
+  assert.equal(taskLine({ id: 3, state: 'done', title: 'icons', owner_name: '[pc] design', result: '3 icons', paths: 'img/' }), 'T3 [done] icons — [pc] design | 3 icons | img/');
 });

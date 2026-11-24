@@ -47,7 +47,8 @@
       <button type="button" data-tab="board" aria-pressed="true">지도</button>
       <button type="button" data-tab="chat" aria-pressed="false">대화</button>
       <button type="button" data-tab="files" aria-pressed="false">파일</button>
-      <button type="button" data-tab="todo" aria-pressed="false">할 일<span class="badge" data-todo-count></span></button>
+      <button type="button" data-tab="todo" aria-pressed="false" title="세션이 사용자에게 맡긴 일">내 할 일<span class="badge" data-todo-count></span></button>
+      <button type="button" data-tab="tasks" aria-pressed="false" title="세션끼리 나눈 T번호 작업">작업<span class="badge" data-task-count></span></button>
       <button type="button" data-tab="jobs" aria-pressed="false">진행</button>
     </nav>
     <button id="logout" class="ghost-btn" type="button">로그아웃</button>
@@ -80,7 +81,8 @@
     <nav class="side-tabs" aria-label="오른쪽 칸">
       <button type="button" data-side="chat" aria-pressed="true">대화</button>
       <button type="button" data-side="files" aria-pressed="false">파일</button>
-      <button type="button" data-side="todo" aria-pressed="false">할 일<span class="badge" data-todo-count></span></button>
+      <button type="button" data-side="todo" aria-pressed="false" title="세션이 사용자에게 맡긴 일">내 할 일<span class="badge" data-todo-count></span></button>
+      <button type="button" data-side="tasks" aria-pressed="false" title="세션끼리 나눈 T번호 작업">작업<span class="badge" data-task-count></span></button>
       <button type="button" data-side="jobs" aria-pressed="false">진행</button>
     </nav>
     <section class="chat" aria-label="대화">
@@ -134,6 +136,11 @@
       <div id="jobsUsage" class="jobs-usage"></div>
       <ul id="jobsTop" class="jobs-top"></ul>
       <ul id="jobsList" class="jobs-list"></ul>
+    </section>
+
+    <section class="todo tasks" id="tasks" aria-label="세션 작업">
+      <p class="todo-lead">세션끼리 나눈 작업(T번호)입니다. 세션이 <code>hub-task.sh</code>나 <code>@task·@done</code> 메시지로 직접 고칩니다. 사용자가 할 일은 '내 할 일'에. <b id="taskFresh"></b></p>
+      <ul id="taskList" class="todo-list"></ul>
     </section>
 
     <section class="todo" id="todo" aria-label="내가 할 일">

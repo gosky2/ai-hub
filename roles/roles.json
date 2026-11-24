@@ -1,0 +1,9 @@
+{
+  "_comment": "Default model and effort per role, used by `aihub session add` and `wake` unless --model/--effort are given. Light work (notes, tidy-ups) → a lighter model; design and debugging → a heavier one. Values are passed to claude --model / --effort as-is.",
+  "pm": { "model": "opus", "effort": "high" },
+  "dev": { "model": "opus", "effort": "high" },
+  "ops": { "model": "sonnet", "effort": "medium" },
+  "design": { "model": "sonnet", "effort": "medium" },
+  "video": { "model": "sonnet", "effort": "medium" },
+  "docs": { "model": "sonnet", "effort": "low" }
+}

@@ -119,6 +119,10 @@ if (process.argv[2] === 'selftest') {
   assert.equal(validCheck('exists:/tmp/x'), 'exists:/tmp/x');
   for (const bad of ['rm -rf /', 'test -d /tmp', 'contains:nofile', 'exists:a\nb']) assert.equal(validCheck(bad), false, bad);
   assert.equal(validCheck(''), null);
+  assert.deepEqual(parseProto('@task T12 → [server] design | 우선:높음 / 홈 화면 시안 / docs/a.png 올림 / @done으로 보고'), [{ op: 'task', id: 12, to: '[server] design', fields: ['우선:높음', '홈 화면 시안', 'docs/a.png 올림', '@done으로 보고'] }]);
+  assert.deepEqual(parseProto('보고합니다\n@done T7 | 시안 3개 | 시안/ | 아이콘 없음'), [{ op: 'done', id: 7, result: '시안 3개', paths: '시안/', left: '아이콘 없음' }]);
+  assert.deepEqual(parseProto('@ask T7 | 다크 모드도 할까요?')[0], { op: 'ask', id: 7, result: '다크 모드도 할까요?', paths: '', left: '' });
+  assert.deepEqual(parseProto('메일 주소 a@task.com 그냥 글'), []);
   console.log('selftest ok'); process.exit(0);
 }
 if (!VIEW_PASSWORD || !EVENT_TOKEN || !COOKIE_SECRET) { console.error('VIEW_PASSWORD, EVENT_TOKEN, COOKIE_SECRET 필요 — `aihub init`이 .env를 만들어 줍니다'); process.exit(1); }
@@ -285,7 +289,7 @@ function setDesc(s, kind, d) {
 // 옛 세션에 고른 모델(want)이 걸려 있고, 같은 컴퓨터·같은 폴더 이름(auto)의 새 세션이 켜지면 그 새 세션이 이어 받은 것으로 봄
 function handoverFrom(s) {
   if (!s.auto) return null;
-  return [...sessions.values()].find((o) => o !== s && o.machine === s.machine && o.auto === s.auto && o.wantModel) || null;
+  return [...sessions.values()].find((o) => o !== s && o.machine === s.machine && o.auto === s.auto && (o.wantModel || (o.refreshing && Date.now() - o.refreshing < 3600e3))) || null; // 모델 바꿔 다시 띄움 또는 '정리하고 새로 시작'
 }
 function handover(old, neu) {
   db.prepare('update asks set session = ? where session = ? and delivered is null').run(neu.session, old.session); // 아직 안 간 허브 지시
@@ -297,6 +301,7 @@ function handover(old, neu) {
   if (old.descSelf && !neu.descSelf) setDesc(neu, 'self', old.descSelf);
   neu.wantModel = neu.model && modelMatches(neu.model, old.wantModel) ? null : old.wantModel; // 새 모델이 아직 안 왔으면 첫 답 때 맞춰 지움
   db.prepare('insert into models(key, model, want) values(?,?,?) on conflict(key) do update set want=excluded.want').run(neu.key, neu.model || null, neu.wantModel || null);
+  if (old.refreshing) { db.prepare('update or replace cards set key = ? where key = ?').run(neu.key, old.key); db.prepare('update tasks set owner = ? where owner = ?').run(neu.key, old.key); old.refreshing = 0; hidden[old.key] = 8.64e15; db.prepare('insert into hidden(key,ts) values(?,?) on conflict(key) do update set ts=excluded.ts').run(old.key, hidden[old.key]); } // 카드·작업은 새 세션으로, 옛 카드는 숨김
   old.wantModel = null; old.state = 'offline';
   old.name = null; old.aliases = []; db.prepare('delete from names where key = ?').run(old.key); db.prepare('delete from aliases where key = ?').run(old.key); // 이름으로 오는 메시지는 새 세션으로
   db.prepare('update models set want = null where key = ?').run(old.key);
@@ -350,6 +355,7 @@ function record(e) {
   if (s && e.desc && !s.descSelf) setDesc(s, 'self', e.desc); // 세션이 켜질 때 폴더 CLAUDE.md 첫 제목(hub-hook.sh가 보냄)
   if (s && e.cwd) { const an = autoName(ev.machine, e.cwd); if (an && s.auto !== an) { s.auto = an; db.prepare('insert into autonames(key,name) values(?,?) on conflict(key) do update set name=excluded.name').run(s.key, an); } }
   if (s && ev.type === 'heartbeat') { const old = handoverFrom(s); if (old) handover(old, s); }
+  if (s && (ev.type === 'send' || ev.type === 'reply') && /^\s*@(task|done|block|ask)\s+T\d/im.test(e.text || '')) applyProto(e, s);
   broadcast({ kind: 'event', event: ev, session: s ? view(s) : null });
   if (ev.type === 'receive') broadcast({ kind: 'sessions', sessions: [...sessions.values()].map(view) }); // 보낸 쪽 이름을 막 배웠을 수 있음
   return ev;
@@ -446,6 +452,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/files' || p.startsWith('/api/files/')) return await files(req, res, p);
     if (p === '/api/todos' || p.startsWith('/api/todos/')) return await todos(req, res, p);
+    if (p === '/api/tasks' || p === '/api/card' || p === '/api/cards' || p === '/api/refresh') return await work(req, res, p);
     if (p === '/api/pair' || p.startsWith('/api/pair/')) return await pair(req, res, p);
     if (req.method === 'POST' && p === '/api/desc') { // 세션이 스스로 설명 등록(hub-hook.sh desc "…"): 그 컴퓨터에서 가장 최근에 일한 세션, 또는 {session}
       if (!bearer(req)) return send(res, 401, { error: '토큰이 맞지 않음' });
@@ -810,6 +817,103 @@ async function todos(req, res, p) {
   }
   return send(res, 405, { error: 'GET/POST /api/todos, POST /api/todos/<id>/done|undo' });
 }
+
+// ---- 세션 작업(T번호 보드)·세션 카드·정리하고 새로 시작 ----
+// '사용자 할 일'(todos, 사람이 할 일)과 다른 것: 세션끼리 나눈 작업. 세션은 hub-task.sh로, PM은 digest로 바뀐 것만 받음
+db.exec(`create table if not exists tasks(id integer primary key, ts integer not null, updated integer not null, title text not null, owner text, owner_name text,
+  state text not null default 'todo', done_when text, result text, paths text, by text);
+  create table if not exists cards(key text primary key, ts integer not null, now text, decided text, todo text, files text)`);
+const TASK_STATES = ['todo', 'doing', 'block', 'done'];
+const TASK_OP = { start: 'doing', done: 'done', block: 'block', ask: 'block', todo: 'todo' };
+const findSession = (n) => { const x = String(n || '').trim(); if (!x) return null; return sessions.get(x) || [...sessions.values()].filter((s) => s.name === x || s.auto === x || s.aliases.includes(x)).sort((a, b) => b.last - a.last)[0] || null; };
+function taskSet(id, patch) {
+  const t = db.prepare('select * from tasks where id = ?').get(id); if (!t) return null;
+  const n = { ...t, ...patch, updated: Date.now() };
+  db.prepare('update tasks set updated=?, title=?, owner=?, owner_name=?, state=?, done_when=?, result=?, paths=?, by=? where id = ?').run(n.updated, n.title, n.owner, n.owner_name, n.state, n.done_when, n.result, n.paths, n.by, id);
+  broadcast({ kind: 'tasks' }); return n;
+}
+// 짧은 메시지 규격: "@task T12 → 받는세션 | 우선:높음 / 목표 / 완료조건 / 보고", "@done|@block|@ask T12 | 결과 | 위치 | 남은 것"
+export function parseProto(text) {
+  const out = [];
+  for (const line of String(text || '').split('\n')) {
+    const m = /^\s*@(task|done|block|ask)\s+T(\d+)\b\s*(.*)$/i.exec(line); if (!m) continue;
+    const op = m[1].toLowerCase(), id = +m[2];
+    if (op === 'task') { const [to, ...f] = m[3].replace(/^\s*(→|->)\s*/, '').split('|'); const rest = f.join('|').trim(); out.push({ op, id, to: to.trim(), fields: rest ? rest.split(/\s+\/\s+/).map((x) => x.trim()) : [] }); }
+    else { const f = m[3].replace(/^\s*\|\s*/, '').split(/\s*\|\s*/); out.push({ op, id, result: f[0] || '', paths: f[1] || '', left: f[2] || '' }); }
+  }
+  return out;
+}
+function applyProto(e, s) { // 세션끼리 보낸 메시지·답에 규격 줄이 있으면 보드도 바꿈(같은 내용이 두 길로 와도 결과는 같음)
+  for (const p of parseProto(e.text)) {
+    if (p.op === 'task') { const o = findSession(p.to); taskSet(p.id, { ...(o ? { owner: o.key, owner_name: o.name || o.auto } : {}), ...(p.fields[2] ? { done_when: p.fields[2] } : {}), by: s?.name || s?.key || null }); continue; }
+    taskSet(p.id, { state: TASK_OP[p.op], result: (p.op === 'ask' ? '질문: ' : '') + [p.result, p.left && `남은 것: ${p.left}`].filter(Boolean).join(' · ') || null, ...(p.paths ? { paths: p.paths } : {}), by: s?.name || s?.key || null });
+  }
+}
+const taskLine = (t) => `T${t.id} [${t.state}] ${t.title}${t.owner_name ? ` — ${t.owner_name}` : ''}${t.result ? ` | ${t.result}` : ''}${t.paths ? ` | ${t.paths}` : ''}`;
+function caller(req, body) { // 토큰이면 그 컴퓨터의 그 세션(X-Hub-Session·body.session, 없으면 가장 최근에 일한 세션), 화면이면 '나'
+  const machine = header(req, 'x-hub-machine') || 'unknown';
+  const sid = str(body.session, 80) || header(req, 'x-hub-session');
+  return (sid && sessions.get(`${machine}/${sid}`)) || [...sessions.values()].filter((x) => x.machine === machine && x.state !== 'offline').sort((a, b) => b.last - a.last)[0] || null;
+}
+async function work(req, res, p) {
+  const byToken = bearer(req);
+  if (!byToken && !authed(req)) return send(res, 401, { error: '로그인 또는 토큰 필요' });
+  const q = new URL(req.url, 'http://x').searchParams;
+  if (p === '/api/tasks' && req.method === 'GET') {
+    const since = +q.get('since') || 0;
+    const list = since ? db.prepare('select * from tasks where updated > ? order by updated').all(since) : db.prepare("select * from tasks where state != 'done' or updated > ? order by id desc limit 300").all(Date.now() - 7 * 864e5);
+    if (q.get('txt')) return send(res, 200, list.map(taskLine).join('\n') + (list.length ? '\n' : ''));
+    return send(res, 200, { now: Date.now(), tasks: list });
+  }
+  if (p === '/api/tasks' && req.method === 'POST') { // {op:new|start|done|block|ask|todo|edit, id?, title?, owner?, note?, done_when?, paths?}
+    const b = JSON.parse((await readBody(req, 16e3)) || '{}'), me = byToken ? caller(req, b) : null, by = me ? me.name || me.auto || me.key : '나';
+    const v = (k, n) => (b[k] == null ? undefined : String(b[k]).trim().slice(0, n) || null);
+    if (b.op === 'new') {
+      const title = v('title', 300); if (!title) return send(res, 400, { error: '제목(title) 필요' });
+      const o = b.owner ? findSession(b.owner) : me; if (b.owner && !o) return send(res, 404, { error: `없는 세션: ${b.owner}` });
+      const now = Date.now(), id = Number(db.prepare('insert into tasks(ts, updated, title, owner, owner_name, state, done_when, paths, by) values(?,?,?,?,?,?,?,?,?)')
+        .run(now, now, title, o?.key || null, o ? o.name || o.auto || o.key : null, b.start ? 'doing' : 'todo', v('done_when', 1000) ?? null, v('paths', 1000) ?? null, by).lastInsertRowid);
+      broadcast({ kind: 'tasks' }); return send(res, 200, { ok: true, id, task: `T${id}` });
+    }
+    const id = +String(b.id || '').replace(/^T/i, ''); if (!id) return send(res, 400, { error: '작업 번호(id, 예: T12) 필요' });
+    let patch;
+    if (TASK_OP[b.op]) patch = { state: TASK_OP[b.op], ...(b.note != null ? { result: (b.op === 'ask' ? '질문: ' : '') + (v('note', 1000) || '') || null } : {}) };
+    else if (b.op === 'edit') { patch = {}; for (const [k, n] of [['title', 300], ['done_when', 1000], ['paths', 1000], ['note', 1000]]) if (v(k, n) !== undefined) patch[k === 'note' ? 'result' : k] = v(k, n); if (b.state && TASK_STATES.includes(b.state)) patch.state = b.state; if (b.owner) { const o = findSession(b.owner); if (!o) return send(res, 404, { error: `없는 세션: ${b.owner}` }); patch.owner = o.key; patch.owner_name = o.name || o.auto || o.key; } }
+    else return send(res, 400, { error: 'op는 new|start|done|block|ask|todo|edit' });
+    if (b.paths != null && b.op !== 'edit') patch.paths = v('paths', 1000);
+    const t = taskSet(id, { ...patch, by }); if (!t) return send(res, 404, { error: `없는 작업 T${id}` });
+    return send(res, 200, { ok: true, task: taskLine(t) });
+  }
+  if (p === '/api/card' && req.method === 'GET') { // ?session=<id> (토큰) 또는 ?key= (화면)
+    const s = q.get('key') ? sessions.get(q.get('key')) : caller(req, { session: q.get('session') });
+    const c = s && db.prepare('select * from cards where key = ?').get(s.key);
+    if (q.get('txt')) return send(res, 200, c ? cardText(c) : '');
+    return send(res, 200, { key: s?.key || null, card: c || null });
+  }
+  if (p === '/api/card' && req.method === 'POST') { // 세션 카드 고치기 {now, decided, todo, files} — 준 칸만 바꿈
+    const b = JSON.parse((await readBody(req, 32e3)) || '{}'), s = byToken ? caller(req, b) : sessions.get(String(b.key || ''));
+    if (!s) return send(res, 404, { error: '세션을 못 찾음' });
+    const cur = db.prepare('select * from cards where key = ?').get(s.key) || {};
+    const val = (k) => (b[k] == null ? cur[k] ?? null : String(b[k]).trim().slice(0, 4000) || null);
+    db.prepare('insert into cards(key, ts, now, decided, todo, files) values(?,?,?,?,?,?) on conflict(key) do update set ts=excluded.ts, now=excluded.now, decided=excluded.decided, todo=excluded.todo, files=excluded.files')
+      .run(s.key, Date.now(), val('now'), val('decided'), val('todo'), val('files'));
+    broadcast({ kind: 'cards' }); return send(res, 200, { ok: true, key: s.key });
+  }
+  if (p === '/api/cards' && req.method === 'GET') return send(res, 200, { cards: Object.fromEntries(db.prepare('select * from cards').all().map((c) => [c.key, c])) });
+  if (p === '/api/refresh' && req.method === 'POST') { // 화면 '정리하고 새로 시작'(사용자 확인 뒤): 그 세션에 카드 최신화 + handoff 지시
+    if (!authed(req)) return send(res, 403, { error: '화면에서 사용자만 할 수 있습니다' });
+    const { key } = JSON.parse((await readBody(req, 2e3)) || '{}'), s = sessions.get(String(key || '')); if (!s) return send(res, 404, { error: '없는 세션' });
+    s.refreshing = Date.now();
+    const text = '[허브: 정리하고 새로 시작] 사용자가 이 세션을 정리하고 새 세션으로 이어 가라고 했습니다.\n1) 세션 카드를 지금 상태로 고치세요: sh ~/.claude/hub-task.sh card --now "지금 하는 일" --decided "정한 것" --todo "남은 일" --files "중요 파일·경로"\n2) 그다음 sh ~/.claude/hub-task.sh handoff 를 실행하세요(같은 이름·폴더·모델로 새 세션을 띄워 카드를 넘기고, 이 세션은 잠시 뒤 멈춥니다).\n다른 일은 하지 말고, 끝나면 한 줄로 알려 주세요.';
+    const aev = record({ machine: s.machine, session: s.session, type: 'ask', text: '정리하고 새로 시작 요청' });
+    db.prepare('insert into asks(ts,session,text,event_id) values(?,?,?,?)').run(Date.now(), s.session, text, aev?.id ?? null);
+    const w = waiters.get(s.session)?.shift(); if (w) deliver(w, s);
+    const slept = !w && stateOf(s) === 'asleep';
+    return send(res, 200, { ok: true, waiting: !w, ...(slept ? wakeMany([s]) : {}) });
+  }
+  return send(res, 405, { error: 'GET/POST /api/tasks, GET/POST /api/card, GET /api/cards, POST /api/refresh' });
+}
+const cardText = (c) => [c.now && `지금 하는 일: ${c.now}`, c.decided && `정한 것: ${c.decided}`, c.todo && `남은 일: ${c.todo}`, c.files && `중요 파일: ${c.files}`].filter(Boolean).join('\n');
 
 // 새 기기 붙이기(join.sh): 1) POST /api/pair {machine} → 일회용 코드, 허브 '할 일'에 승인 요청
 // 2) 사용자가 화면에서 코드가 같은지 보고 '했어요' → 이 기기 전용 토큰 발급 3) join.sh가 GET /api/pair/<id>?code= 로 한 번 받아 감(받으면 서버에서 지움)
