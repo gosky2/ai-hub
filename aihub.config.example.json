@@ -1,0 +1,7 @@
+{
+  "hubUrl": "http://localhost:4200",
+  "machine": "",
+  "workspace": "~/aihub-sessions",
+  "rolesDir": "roles",
+  "claudeArgs": []
+}

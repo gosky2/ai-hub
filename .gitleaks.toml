@@ -1,0 +1,16 @@
+# gitleaks: default rules plus a check that no personal hosts or e-mail addresses slip in.
+# Add your own private domains to the regex below in a fork if you deploy from one.
+title = "ai-hub gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "email-address"
+description = "Real e-mail address (use example.com / users.noreply addresses in docs and tests)"
+regex = '''[A-Za-z0-9._%+-]+@(?:gmail|naver|daum|kakao|outlook|hotmail|yahoo|icloud|proton(?:mail)?)\.[a-z.]+'''
+keywords = ["@"]
+
+[allowlist]
+description = "lockfile integrity hashes"
+paths = ['''package-lock\.json''']

@@ -1,0 +1,17 @@
+{
+  "name": "ai-hub",
+  "version": "0.1.0",
+  "description": "A small self-hosted hub for your Claude Code sessions: see what each session is doing, send instructions, share files, and manage roles and tools from one page.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "aihub": "cli/aihub.mjs" },
+  "engines": { "node": ">=22.13" },
+  "files": ["server", "web", "cli", "roles", "docs", ".env.example", "aihub.config.example.json"],
+  "scripts": {
+    "start": "node --no-warnings --env-file-if-exists=.env server/index.mjs",
+    "test": "node --no-warnings server/index.mjs selftest && node --no-warnings --test test/*.test.mjs",
+    "lint": "eslint . && sh test/lint-shell.sh"
+  },
+  "dependencies": { "ws": "8.18.0" },
+  "devDependencies": { "eslint": "9.17.0", "@eslint/js": "9.17.0", "globals": "15.14.0" }
+}

@@ -1,0 +1,12 @@
+services:
+  hub:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      DB_PATH: /data/hub.db
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:${PORT:-4200}:4200"
